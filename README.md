@@ -279,12 +279,13 @@ Fora do escopo deste case, mas seriam os próximos passos naturais em produção
 
 - **Soft delete** (campo `deleted_at`) em vez de remoção física, preservando linhagem
   histórica de tabelas descontinuadas.
-- **Autenticação/autorização** (ex.: OAuth2/JWT) para que `owner`/`updated_by` reflitam
-  o usuário autenticado, não um campo livre no payload.
+- **Autenticação/autorização** — design completo já feito, não implementado:
+  [docs/sdd-api-authentication.md](docs/sdd-api-authentication.md).
 - **Lineage entre tabelas** (upstream/downstream) como uma segunda collection
   relacionando `metadata_id`s.
-- **Integração com AWS Glue Data Catalog / BigQuery INFORMATION_SCHEMA** para
-  auto-descoberta e sincronização de schema real, reduzindo drift entre o catálogo e a
-  estrutura física.
+- **Sincronização com um AWS Glue Data Catalog real** (não mockado) — o emulador
+  (seção acima) já valida o mapeamento de campos e o fluxo de sync; falta só trocar a
+  fonte `moto` por credenciais AWS reais, como descrito na seção 11 de
+  [docs/sdd-glue-catalog-emulator.md](docs/sdd-glue-catalog-emulator.md).
 - **Observabilidade**: métricas de uso do catálogo (tabelas mais buscadas, sem owner
   definido, etc.) — tratando o serviço como produto interno, com SLAs próprios.
