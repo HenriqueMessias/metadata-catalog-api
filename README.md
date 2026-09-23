@@ -126,10 +126,28 @@ Prefixo: `/api/v1`.
 `GET /metadata` aceita `skip`, `limit`, `owner_email`, `domain`, `tag` e `search`
 (busca case-insensitive por `table_name`).
 
-### Exemplo — criar um metadado
+### Autenticação
+
+`GET` continua público (descoberta é o propósito central do catálogo). `POST`, `PUT` e
+`DELETE` exigem um Bearer JWT — `created_by`/`updated_by` são derivados da identidade
+autenticada, nunca aceitos como campo livre no corpo da requisição. Design completo em
+[docs/sdd-api-authentication.md](docs/sdd-api-authentication.md).
+
+Para testar localmente, sem precisar de um Cognito real:
 
 ```bash
+python scripts/mint_dev_token.py --subject henrique --email henrique@example.com
+```
+
+Isso gera (na primeira vez) um par de chaves de desenvolvimento em `.devkeys/`
+(gitignorado) e imprime um token válido por 60 min. Cole em Swagger → "Authorize" como
+`Bearer <token>`, ou use direto:
+
+```bash
+TOKEN=$(python scripts/mint_dev_token.py)
+
 curl -X POST http://localhost:8000/api/v1/metadata \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "table_name": "orders",
@@ -148,8 +166,12 @@ curl -X POST http://localhost:8000/api/v1/metadata \
   }'
 ```
 
-Respostas de erro seguem `{"detail": "..."}`: `404` para metadado inexistente e `409`
-para tabela já cadastrada (mesma tripla `database_name` + `schema_name` + `table_name`).
+Em produção, `AUTH_ISSUER`/`AUTH_JWKS_URL` apontam para um Cognito User Pool real (ver
+`template.yaml`) em vez da chave de dev — nenhuma mudança de código, só configuração.
+
+Respostas de erro seguem `{"detail": "..."}`: `401` sem token/token inválido em rota
+protegida, `404` para metadado inexistente, `409` para tabela já cadastrada (mesma
+tripla `database_name` + `schema_name` + `table_name`).
 
 ## Testes
 
@@ -165,7 +187,10 @@ Pydantic, exception handlers) sem infraestrutura externa.
 
 - `tests/test_metadata_service.py` — regras de negócio (duplicidade, versionamento de
   schema, not-found)
-- `tests/test_metadata_api.py` — contrato HTTP (status codes, ciclo de vida CRUD completo)
+- `tests/test_metadata_api.py` — contrato HTTP (status codes, ciclo de vida CRUD completo,
+  401 em rota protegida sem token, `created_by`/`updated_by` derivados do principal)
+- `tests/test_auth.py` — verificação de JWT isolada (assinatura, expiração, issuer,
+  claim `sub` ausente), sem rede nem app FastAPI
 - `tests/test_lambda_handler.py` — garante que o entrypoint Lambda importa sem quebrar
 
 ## Deploy em AWS (Lambda + API Gateway)
@@ -242,7 +267,15 @@ sam local start-api
 - **Pydantic v2** para validação de entrada/saída e separação clara entre modelo de
   persistência (`MetadataInDB`) e contratos de API (`MetadataCreate`/`MetadataUpdate`/
   `MetadataResponse`) — evita vazar detalhes de storage (ex.: `_id`) para o contrato
-  público sem necessidade.
+  público sem necessidade. O mesmo padrão separa `MetadataCreateRequest`/
+  `MetadataUpdateRequest` (o que o cliente pode enviar) de `MetadataCreate`/
+  `MetadataUpdate` (o que o serviço recebe) — `created_by`/`updated_by` só existem no
+  segundo, preenchidos pela rota a partir do token, nunca aceitos do cliente.
+- **JWT com chave de desenvolvimento local**: a mesma verificação de assinatura roda em
+  dev (`AUTH_ISSUER=dev`, chave em `.devkeys/`, gerada por `scripts/mint_dev_token.py`)
+  e produção (`AUTH_ISSUER` = Cognito real) — só a fonte da chave pública muda,
+  configuração, não código. Detalhes e trade-offs em
+  [docs/sdd-api-authentication.md](docs/sdd-api-authentication.md).
 
 ## Possíveis evoluções
 
@@ -250,8 +283,10 @@ Fora do escopo deste case, mas seriam os próximos passos naturais em produção
 
 - **Soft delete** (campo `deleted_at`) em vez de remoção física, preservando linhagem
   histórica de tabelas descontinuadas.
-- **Autenticação/autorização** (ex.: OAuth2/JWT) para que `owner`/`updated_by` reflitam
-  o usuário autenticado, não um campo livre no payload.
+- **Autorização granular** (scopes/RBAC — ex.: só um papel admin pode `DELETE`):
+  autenticação já implementada (JWT, ver seção [Autenticação](#autenticação) e
+  [docs/sdd-api-authentication.md](docs/sdd-api-authentication.md)); autorização por
+  papel é o próximo passo natural, documentado como evolução futura no próprio SDD.
 - **Lineage entre tabelas** (upstream/downstream) como uma segunda collection
   relacionando `metadata_id`s.
 - **Integração com AWS Glue Data Catalog / BigQuery INFORMATION_SCHEMA** para

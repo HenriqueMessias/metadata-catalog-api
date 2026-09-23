@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import MetadataServiceDep
+from app.api.deps import CurrentPrincipalDep, MetadataServiceDep
 from app.core.config import get_settings
 from app.models.metadata import (
     MetadataCreate,
+    MetadataCreateRequest,
     MetadataResponse,
     MetadataUpdate,
+    MetadataUpdateRequest,
     PaginatedResponse,
     SchemaVersionEntry,
 )
@@ -21,8 +23,11 @@ router = APIRouter(prefix="/metadata", tags=["metadata"])
     status_code=status.HTTP_201_CREATED,
     summary="Register a new table's metadata",
 )
-async def create_metadata(payload: MetadataCreate, service: MetadataServiceDep) -> MetadataResponse:
-    metadata = await service.create(payload)
+async def create_metadata(
+    payload: MetadataCreateRequest, service: MetadataServiceDep, principal: CurrentPrincipalDep
+) -> MetadataResponse:
+    create = MetadataCreate(**payload.model_dump(), created_by=principal.email or principal.subject)
+    metadata = await service.create(create)
     return MetadataResponse.model_validate(metadata.model_dump(by_alias=False))
 
 
@@ -90,9 +95,18 @@ async def get_schema_history(metadata_id: str, service: MetadataServiceDep) -> l
     summary="Update a table's metadata (schema changes bump schema_version)",
 )
 async def update_metadata(
-    metadata_id: str, payload: MetadataUpdate, service: MetadataServiceDep
+    metadata_id: str,
+    payload: MetadataUpdateRequest,
+    service: MetadataServiceDep,
+    principal: CurrentPrincipalDep,
 ) -> MetadataResponse:
-    metadata = await service.update(metadata_id, payload)
+    # exclude_unset=True is load-bearing: MetadataService.update() diffs
+    # `columns` to decide whether to bump schema_version, so only fields
+    # the client actually sent may be forwarded -- see the comment there.
+    update = MetadataUpdate(
+        **payload.model_dump(exclude_unset=True), updated_by=principal.email or principal.subject
+    )
+    metadata = await service.update(metadata_id, update)
     return MetadataResponse.model_validate(metadata.model_dump(by_alias=False))
 
 
@@ -101,5 +115,5 @@ async def update_metadata(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Remove a table's metadata from the catalog",
 )
-async def delete_metadata(metadata_id: str, service: MetadataServiceDep) -> None:
+async def delete_metadata(metadata_id: str, service: MetadataServiceDep, principal: CurrentPrincipalDep) -> None:
     await service.delete(metadata_id)

@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     default_page_size: int = 20
     max_page_size: int = 100
 
+    # "dev" (default) verifies tokens signed by the local dev keypair
+    # (see scripts/mint_dev_token.py) -- no AWS account needed to run or
+    # test this locally. Point at a real Cognito User Pool's issuer/JWKS
+    # in production (see docs/sdd-api-authentication.md).
+    auth_issuer: str = "dev"
+    auth_audience: str | None = None
+    auth_jwks_url: str | None = None
+    auth_dev_keys_dir: str = ".devkeys"
+
 
 @lru_cache
 def get_settings() -> Settings:
