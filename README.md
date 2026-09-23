@@ -15,6 +15,7 @@ Desenvolvido como case técnico: FastAPI + MongoDB, CRUD completo para a entidad
 - [Como rodar](#como-rodar)
 - [Endpoints](#endpoints)
 - [Testes](#testes)
+- [Gerador de dados de teste (emulador de AWS Glue)](#gerador-de-dados-de-teste-emulador-de-aws-glue)
 - [Deploy em AWS (Lambda + API Gateway)](#deploy-em-aws-lambda--api-gateway)
 - [Decisões técnicas](#decisões-técnicas)
 - [Possíveis evoluções](#possíveis-evoluções)
@@ -167,6 +168,34 @@ Pydantic, exception handlers) sem infraestrutura externa.
   schema, not-found)
 - `tests/test_metadata_api.py` — contrato HTTP (status codes, ciclo de vida CRUD completo)
 - `tests/test_lambda_handler.py` — garante que o entrypoint Lambda importa sem quebrar
+- `tests/test_glue_generator.py`, `test_glue_catalog_simulator.py`, `test_glue_mapper.py`
+  — testes do emulador de Glue (seção seguinte), sem rede
+
+## Gerador de dados de teste (emulador de AWS Glue)
+
+Para avaliar o comportamento da API sob dados e volume realistas — não só os 1-2
+registros dos testes unitários — `scripts/glue_emulator/` emula um AWS Glue Data
+Catalog (via [`moto`](https://github.com/getmoto/moto), mockando o `boto3` real) e
+sincroniza tabelas sintéticas com esta API. Design completo, decisões de mapeamento de
+campos e o resultado de uma validação de ponta a ponta (que encontrou e corrigiu um bug
+real) estão em [docs/sdd-glue-catalog-emulator.md](docs/sdd-glue-catalog-emulator.md).
+
+```bash
+pip install -r requirements-glue-emulator.txt
+
+python -m scripts.glue_emulator seed  --tables 200 --seed 42 --api-url http://localhost:8000/api/v1
+python -m scripts.glue_emulator drift --tables 200 --seed 42 --ratio 0.2 --api-url http://localhost:8000/api/v1
+python -m scripts.glue_emulator load  --tables 5000 --api-url http://localhost:8000/api/v1
+python -m scripts.glue_emulator rerun --tables 200 --seed 42 --api-url http://localhost:8000/api/v1
+```
+
+Essas dependências (`moto`, `boto3`, `faker`) ficam isoladas desse arquivo — nunca
+entram no `requirements.txt` de produção nem no pacote da Lambda (`.samignore`).
+
+Um segundo documento, [docs/sdd-api-authentication.md](docs/sdd-api-authentication.md),
+propõe autenticação para a API (JWT via Cognito) — motivado por uma lacuna real de
+auditoria encontrada ao desenhar este emulador (`created_by`/`updated_by` hoje são texto
+livre). Ainda não implementado.
 
 ## Deploy em AWS (Lambda + API Gateway)
 
@@ -250,12 +279,13 @@ Fora do escopo deste case, mas seriam os próximos passos naturais em produção
 
 - **Soft delete** (campo `deleted_at`) em vez de remoção física, preservando linhagem
   histórica de tabelas descontinuadas.
-- **Autenticação/autorização** (ex.: OAuth2/JWT) para que `owner`/`updated_by` reflitam
-  o usuário autenticado, não um campo livre no payload.
+- **Autenticação/autorização** — design completo já feito, não implementado:
+  [docs/sdd-api-authentication.md](docs/sdd-api-authentication.md).
 - **Lineage entre tabelas** (upstream/downstream) como uma segunda collection
   relacionando `metadata_id`s.
-- **Integração com AWS Glue Data Catalog / BigQuery INFORMATION_SCHEMA** para
-  auto-descoberta e sincronização de schema real, reduzindo drift entre o catálogo e a
-  estrutura física.
+- **Sincronização com um AWS Glue Data Catalog real** (não mockado) — o emulador
+  (seção acima) já valida o mapeamento de campos e o fluxo de sync; falta só trocar a
+  fonte `moto` por credenciais AWS reais, como descrito na seção 11 de
+  [docs/sdd-glue-catalog-emulator.md](docs/sdd-glue-catalog-emulator.md).
 - **Observabilidade**: métricas de uso do catálogo (tabelas mais buscadas, sem owner
   definido, etc.) — tratando o serviço como produto interno, com SLAs próprios.

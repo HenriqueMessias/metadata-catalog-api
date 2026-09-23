@@ -12,3 +12,6 @@ README.md
 docker-compose.yml
 pytest.ini
 requirements-dev.txt
+docs/
+scripts/
+requirements-glue-emulator.txt
