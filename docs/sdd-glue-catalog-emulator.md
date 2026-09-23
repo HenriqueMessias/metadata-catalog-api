@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposto (aguardando aprovação para implementar) |
+| **Status** | Implementado e validado (`feature/glue-catalog-emulator`) — ver seção 9.1 |
 | **Autor** | Henrique Messias Santos |
 | **Componente afetado** | Novo: `scripts/glue_emulator/` (ferramenta de suporte, fora do pacote de deploy da API) |
 | **Relacionado** | [README.md](../README.md), [template.yaml](../template.yaml), [sdd-api-authentication.md](sdd-api-authentication.md) |
@@ -209,6 +209,37 @@ implementação (seção 8).
   total de `seed` de N tabelas escala de forma previsível.
 - Filtros (`domain`, `tag`, `owner_email`, `search`) retornam resultados corretos contra
   o volume gerado, não só contra os 1-2 registros dos testes unitários existentes.
+
+## 9.1 Validação executada (pós-implementação)
+
+Rodado de ponta a ponta contra a API local real (MongoDB via `docker compose`,
+`uvicorn`), não só contra o repositório fake dos testes unitários:
+
+- `seed --tables 30 --databases 3 --seed 42`: 30/30 criadas (`201`), 0 falhas.
+- `rerun` (mesmo `--seed`): **`created=0, updated=30, conflicts(409)=0`** — diferente do
+  previsto originalmente nesta seção (`409` esperado). `find_existing_id` (seção 4) já
+  resolve a identidade antes de decidir POST/PUT, então uma resincronização idêntica vira
+  `PUT` idempotente em vez de bater no `409` — mais robusto do que o desenho original
+  previa. Confirmado via `GET`: `schema_version` permaneceu `1` (o diff de colunas no
+  serviço corretamente não detectou mudança).
+- `drift --ratio 0.3`: **bug real encontrado** — de 9 tabelas selecionadas para sofrer
+  drift, só 8 tiveram `schema_version` incrementado; a 9ª (`product_purpose.coach_long`)
+  ficou com o mesmo conjunto de colunas antes/depois. Causa: `drift_columns()` podia
+  sortear para remoção **a própria coluna que acabara de adicionar**, netando zero
+  mudança. Corrigido em `generator.py` (excluir a coluna recém-adicionada do conjunto
+  removível) + teste de regressão (`test_drift_columns_never_nets_out_to_no_change`,
+  varrendo 200 seeds). Reexecutado: `9/9` tabelas corretamente incrementadas para
+  `schema_version=2`, com `schema_history[0]` preservando as colunas da versão anterior.
+- `load --tables 500 --databases 10`: 500/500 criadas, ~60 req/s (limitado pelo
+  lookup `O(n)` já documentado na seção 4/10, não pela API em si). Paginação
+  (`GET /metadata`, sem parâmetros) devolveu corretamente 20/500 (limite padrão);
+  filtros `domain`, `tag` e `owner_email` retornaram contagens e conteúdo corretos
+  contra o volume completo.
+
+Essa validação é exatamente o motivo de o emulador existir (seção 1): o bug do
+`drift_columns` não teria aparecido nos testes unitários originais (que não cobriam
+esse caso específico) nem seria visível manualmente com 1-2 registros de teste — só
+apareceu ao gerar volume e comparar resultado esperado vs. real.
 
 ## 10. Riscos e limitações
 
