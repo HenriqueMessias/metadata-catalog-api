@@ -1,0 +1,75 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Data Catalog API — FastAPI CRUD service for table metadata, packaged for
+  AWS Lambda behind an HTTP API (API Gateway v2).
+
+Parameters:
+  Stage:
+    Type: String
+    Default: prod
+    Description: API Gateway deployment stage name.
+  MongoUri:
+    Type: String
+    NoEcho: true
+    Description: >
+      MongoDB connection string (e.g. a MongoDB Atlas SRV URI). Passed as a
+      Lambda environment variable — for a real production rollout, prefer
+      storing this in AWS Secrets Manager and resolving it at cold start
+      instead of passing it as a plain CloudFormation parameter.
+  MongoDbName:
+    Type: String
+    Default: data_catalog
+  MongoCollection:
+    Type: String
+    Default: metadata
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 29 # API Gateway's own integration timeout caps at 29s regardless of the function's own limit
+    MemorySize: 256
+    Architectures:
+      - x86_64
+
+Resources:
+  DataCatalogFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: app.lambda_handler.handler
+      Environment:
+        Variables:
+          MONGO_URI: !Ref MongoUri
+          MONGO_DB_NAME: !Ref MongoDbName
+          MONGO_COLLECTION: !Ref MongoCollection
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref DataCatalogHttpApi
+            Path: $default
+            Method: ANY
+      # If MongoDB is only reachable from inside a VPC (self-hosted on EC2,
+      # or Amazon DocumentDB), uncomment and fill in VpcConfig — this also
+      # requires the execution role to have ec2:CreateNetworkInterface
+      # permissions (AWSLambdaVPCAccessExecutionRole).
+      # VpcConfig:
+      #   SecurityGroupIds:
+      #     - sg-xxxxxxxx
+      #   SubnetIds:
+      #     - subnet-xxxxxxxx
+      #     - subnet-yyyyyyyy
+
+  DataCatalogHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Stage
+
+Outputs:
+  ApiUrl:
+    Description: Base URL of the deployed API
+    Value: !Sub "https://${DataCatalogHttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/"
+  FunctionName:
+    Description: Lambda function name
+    Value: !Ref DataCatalogFunction
