@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from bson import ObjectId
 from bson.errors import InvalidId
 from motor.motor_asyncio import AsyncIOMotorCollection
@@ -55,15 +57,7 @@ class MongoMetadataRepository(MetadataRepository):
         tag: str | None = None,
         search: str | None = None,
     ) -> tuple[list[MetadataInDB], int]:
-        query: dict = {}
-        if owner_email:
-            query["owner.email"] = owner_email
-        if domain:
-            query["domain"] = domain
-        if tag:
-            query["tags"] = tag
-        if search:
-            query["table_name"] = {"$regex": search, "$options": "i"}
+        query = self._build_filter(owner_email=owner_email, domain=domain, tag=tag, search=search)
 
         total = await self._collection.count_documents(query)
         cursor = (
@@ -99,6 +93,27 @@ class MongoMetadataRepository(MetadataRepository):
             return False
         result = await self._collection.delete_one({"_id": object_id})
         return result.deleted_count > 0
+
+    @staticmethod
+    def _build_filter(
+        owner_email: str | None = None,
+        domain: str | None = None,
+        tag: str | None = None,
+        search: str | None = None,
+    ) -> dict:
+        query: dict = {}
+        if owner_email:
+            query["owner.email"] = owner_email
+        if domain:
+            query["domain"] = domain
+        if tag:
+            query["tags"] = tag
+        if search:
+            # `search` is a case-insensitive *substring* match (same contract as
+            # the in-memory fake), never a user-supplied regex: unescaped input
+            # like "(" is an invalid pattern and made Mongo fail the query (500).
+            query["table_name"] = {"$regex": re.escape(search), "$options": "i"}
+        return query
 
     @staticmethod
     def _to_object_id(metadata_id: str) -> ObjectId | None:
