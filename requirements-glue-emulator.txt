@@ -1,0 +1,4 @@
+-r requirements-dev.txt
+moto[glue]>=5.0,<6.0
+boto3>=1.34,<2.0
+faker>=25.0
