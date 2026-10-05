@@ -78,8 +78,8 @@ automaticamente — sem exigir nenhuma ação extra do cliente da API. Um endpoi
 Pré-requisitos: Python 3.11+ e um MongoDB acessível (local, Docker ou Atlas).
 
 ```bash
-git clone https://github.com/<seu-usuario>/<seu-repositorio>.git
-cd <seu-repositorio>
+git clone https://github.com/HenriqueMessias/metadata-catalog-api.git
+cd metadata-catalog-api
 
 python -m venv venv
 # Windows: venv\Scripts\activate
@@ -155,6 +155,14 @@ para tabela já cadastrada (mesma tripla `database_name` + `schema_name` + `tabl
 ## Testes
 
 ```bash
+pytest -v
+```
+
+Com a instalação padrão (`requirements-dev.txt`), os testes do emulador de Glue que
+precisam de `faker`/`moto` são **pulados**, e o restante roda. Para rodar todos:
+
+```bash
+pip install -r requirements-glue-emulator.txt
 pytest -v
 ```
 

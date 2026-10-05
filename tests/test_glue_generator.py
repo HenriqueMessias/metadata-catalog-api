@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
+# Dependências opcionais do emulador (requirements-glue-emulator.txt): sem elas, estes
+# testes são pulados em vez de quebrar a coleta do `pytest` na instalação padrão.
+pytest.importorskip("faker")
+
 from scripts.glue_emulator.generator import TableGenerator
 
 
