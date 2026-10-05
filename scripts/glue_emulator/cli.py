@@ -5,6 +5,7 @@ each mode does and why.
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import sys
 import time
@@ -17,6 +18,13 @@ from scripts.glue_emulator.sync import CatalogSyncClient, SyncStats
 def _build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--api-url", default="http://localhost:8000/api/v1", help="Data Catalog API base URL")
+    common.add_argument(
+        "--token",
+        default=os.environ.get("CATALOG_API_TOKEN"),
+        help="Bearer JWT for the API's write routes (POST/PUT). Defaults to the "
+        "CATALOG_API_TOKEN env var, which keeps it out of shell history. "
+        "Locally: CATALOG_API_TOKEN=$(python scripts/mint_dev_token.py)",
+    )
     common.add_argument("--tables", type=int, default=200, help="Number of synthetic tables to generate")
     common.add_argument(
         "--databases", type=int, default=5, help="Number of synthetic databases to spread tables across"
@@ -77,6 +85,8 @@ def _print_stats(label: str, stats: SyncStats) -> None:
     )
     for error in stats.errors[:10]:
         print(f"  ! {error}")
+    if any(": 401 " in error for error in stats.errors):
+        print("  hint: the API requires a Bearer token for writes -- set CATALOG_API_TOKEN or pass --token")
     if len(stats.errors) > 10:
         print(f"  ... and {len(stats.errors) - 10} more errors")
 
@@ -86,7 +96,7 @@ def run(argv: list[str] | None = None) -> int:
     generator = TableGenerator(seed=args.seed)
     rng = random.Random(args.seed)
 
-    with GlueCatalogSimulator() as catalog, CatalogSyncClient(args.api_url) as sync_client:
+    with GlueCatalogSimulator() as catalog, CatalogSyncClient(args.api_url, token=args.token) as sync_client:
         synthetic_tables = _generate_batch(generator, catalog, args.tables, args.databases, rng)
         glue_tables = catalog.list_all_tables()
 

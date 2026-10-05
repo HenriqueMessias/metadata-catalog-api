@@ -217,6 +217,17 @@ python -m scripts.glue_emulator rerun --tables 200 --seed 42 --api-url http://lo
 Essas dependências (`moto`, `boto3`, `faker`) ficam isoladas desse arquivo — nunca
 entram no `requirements.txt` de produção nem no pacote da Lambda (`.samignore`).
 
+Como `POST`/`PUT` exigem Bearer JWT (seção [Autenticação](#autenticação)), o emulador
+lê o token de `--token` ou da variável `CATALOG_API_TOKEN` (preferível: não fica no
+histórico do shell). Sem token, as escritas voltam `401` e o CLI avisa:
+
+```bash
+export CATALOG_API_TOKEN=$(python scripts/mint_dev_token.py --subject glue-sync --email glue-sync@example.com)
+python -m scripts.glue_emulator seed --tables 200 --seed 42 --api-url http://localhost:8000/api/v1
+```
+
+`created_by`/`updated_by` das tabelas sincronizadas passam a ser o e-mail do token.
+
 Um segundo documento, [docs/sdd-api-authentication.md](docs/sdd-api-authentication.md),
 descreve a autenticação da API (JWT via Cognito) — motivada por uma lacuna real de
 auditoria encontrada ao desenhar este emulador (`created_by`/`updated_by` eram texto

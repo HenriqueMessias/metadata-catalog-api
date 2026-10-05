@@ -154,6 +154,10 @@ entre `template.yaml` e o código da aplicação.
 
 O `sync.py` do [emulador de Glue](sdd-glue-catalog-emulator.md) passa a precisar de um
 token antes de chamar `POST`/`PUT` — via o app client "service" (Client Credentials).
+**Implementado:** `CatalogSyncClient` aceita um `token` opcional (enviado como
+`Authorization: Bearer`), e o CLI o lê de `--token` ou de `CATALOG_API_TOKEN`; localmente
+o token vem de `scripts/mint_dev_token.py`. A obtenção automática via Client Credentials
+contra um Cognito real continua sendo evolução futura.
 Isso não muda a arquitetura desenhada lá, só adiciona um passo de obtenção de token antes
 de cada sincronização. `created_by`/`updated_by` das tabelas sincronizadas pelo emulador
 passam a refletir a identidade do app client (ex. `glue-sync-service@...`), o que é
