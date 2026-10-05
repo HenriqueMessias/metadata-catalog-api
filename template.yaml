@@ -23,6 +23,11 @@ Parameters:
   MongoCollection:
     Type: String
     Default: metadata
+  CognitoDomainPrefix:
+    Type: String
+    Description: >
+      Globally-unique prefix for the Cognito Hosted UI domain (used to reach
+      the /oauth2/token endpoint). E.g. "data-catalog-<your-account-id>".
 
 Globals:
   Function:
@@ -43,6 +48,14 @@ Resources:
           MONGO_URI: !Ref MongoUri
           MONGO_DB_NAME: !Ref MongoDbName
           MONGO_COLLECTION: !Ref MongoCollection
+          # AUTH_ISSUER != "dev" switches app/core/security.py from the local
+          # dev keypair to verifying against this User Pool's JWKS instead.
+          AUTH_ISSUER: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${DataCatalogUserPool}"
+          AUTH_JWKS_URL: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${DataCatalogUserPool}/.well-known/jwks.json"
+          # Not set: Cognito *access* tokens (unlike ID tokens) carry a
+          # `client_id` claim rather than a standard `aud` -- validating a
+          # specific audience here would need a small addition to
+          # verify_token() (SDD's "not implemented" list, section 3).
       Events:
         Api:
           Type: HttpApi
@@ -65,6 +78,66 @@ Resources:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: !Ref Stage
+      # No Authorizer here on purpose: a single catch-all route can't apply
+      # one selectively to write methods only, and applying it to
+      # everything would also block the public GET routes. Enforcement
+      # happens in the FastAPI dependency layer instead -- see
+      # docs/sdd-api-authentication.md, section 6.1.
+
+  # Issuer of the JWTs the API verifies (app/core/security.py). Provisioned
+  # here as a token source only -- no Authorizer wired to it (see above).
+  DataCatalogUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${AWS::StackName}-users"
+      AutoVerifiedAttributes: [email]
+      UsernameAttributes: [email]
+
+  DataCatalogUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref CognitoDomainPrefix
+      UserPoolId: !Ref DataCatalogUserPool
+
+  # Human callers: Authorization Code grant (e.g. via the Hosted UI).
+  DataCatalogHumanClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: data-catalog-human
+      UserPoolId: !Ref DataCatalogUserPool
+      GenerateSecret: false
+      AllowedOAuthFlows: [code]
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes: [openid, email]
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs:
+        - http://localhost:8000/docs/oauth2-redirect
+
+  # Cognito's Client Credentials grant only works with custom scopes tied to
+  # a Resource Server -- standard OIDC scopes (openid/email/profile) are
+  # rejected for this flow, unlike the human client above.
+  DataCatalogResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref DataCatalogUserPool
+      Identifier: catalog
+      Name: Data Catalog API
+      Scopes:
+        - ScopeName: write
+          ScopeDescription: Create/update/delete table metadata
+
+  # Machine callers (e.g. scripts/glue_emulator/sync.py, once adjusted --
+  # see docs/sdd-api-authentication.md, section 7): Client Credentials grant.
+  DataCatalogServiceClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: DataCatalogResourceServer
+    Properties:
+      ClientName: data-catalog-service
+      UserPoolId: !Ref DataCatalogUserPool
+      GenerateSecret: true
+      AllowedOAuthFlows: [client_credentials]
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes: [catalog/write]
 
 Outputs:
   ApiUrl:
@@ -73,3 +146,9 @@ Outputs:
   FunctionName:
     Description: Lambda function name
     Value: !Ref DataCatalogFunction
+  CognitoTokenEndpoint:
+    Description: OAuth2 token endpoint (client-credentials grant for machine callers)
+    Value: !Sub "https://${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com/oauth2/token"
+  CognitoServiceClientId:
+    Description: App client ID for machine callers (client_credentials grant)
+    Value: !Ref DataCatalogServiceClient

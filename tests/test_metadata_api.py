@@ -83,6 +83,48 @@ def test_full_crud_lifecycle(client: TestClient, sample_payload: MetadataCreate)
     assert get_after_delete.status_code == 404
 
 
+def test_create_metadata_sets_created_by_from_authenticated_principal(
+    client: TestClient, sample_payload: MetadataCreate
+):
+    response = client.post(API, json=sample_payload.model_dump(mode="json"))
+
+    # `sample_payload` sets created_by="henrique" in the request body, but
+    # MetadataCreateRequest doesn't accept that field at all (see
+    # app/models/metadata.py) -- it must come from the authenticated
+    # principal (the `client` fixture's overridden test-user), never the
+    # client-supplied body.
+    assert response.json()["created_by"] == "test@example.com"
+
+
+def test_create_metadata_without_token_returns_401(
+    unauthenticated_client: TestClient, sample_payload: MetadataCreate
+):
+    response = unauthenticated_client.post(API, json=sample_payload.model_dump(mode="json"))
+
+    assert response.status_code == 401
+
+
+def test_update_metadata_without_token_returns_401(unauthenticated_client: TestClient):
+    response = unauthenticated_client.put(f"{API}/507f1f77bcf86cd799439011", json={"description": "x"})
+
+    assert response.status_code == 401
+
+
+def test_delete_metadata_without_token_returns_401(unauthenticated_client: TestClient):
+    response = unauthenticated_client.delete(f"{API}/507f1f77bcf86cd799439011")
+
+    assert response.status_code == 401
+
+
+def test_read_routes_do_not_require_a_token(unauthenticated_client: TestClient):
+    # Discovery stays public on purpose -- see docs/sdd-api-authentication.md, section 3.
+    list_response = unauthenticated_client.get(API)
+    detail_response = unauthenticated_client.get(f"{API}/507f1f77bcf86cd799439011")
+
+    assert list_response.status_code == 200
+    assert detail_response.status_code == 404  # not 401: reached the handler, just not found
+
+
 def test_list_supports_search_filter(client: TestClient, sample_payload: MetadataCreate):
     client.post(API, json=sample_payload.model_dump(mode="json"))
     other = sample_payload.model_dump(mode="json")

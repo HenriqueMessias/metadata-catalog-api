@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | Proposto (aguardando aprovação para implementar) |
+| **Status** | Implementado e validado (`feature/api-authentication`) — ver seção 12 |
 | **Autor** | Henrique Messias Santos |
-| **Componente afetado** | `app/api/`, `app/models/metadata.py`, `template.yaml` |
-| **Relacionado** | [sdd-glue-catalog-emulator.md](sdd-glue-catalog-emulator.md) — o job `sync.py` de lá vira um dos clientes autenticados deste doc |
+| **Componente afetado** | `app/api/`, `app/core/security.py`, `app/models/metadata.py`, `template.yaml` |
+| **Relacionado** | `sdd-glue-catalog-emulator.md` (branch `feature/glue-catalog-emulator`, ainda não mergeada) — o job `sync.py` de lá vira um dos clientes autenticados deste doc; ajuste correspondente ainda pendente (seção 7) |
 
 ## 1. Contexto e problema
 
@@ -154,6 +154,10 @@ entre `template.yaml` e o código da aplicação.
 
 O `sync.py` do [emulador de Glue](sdd-glue-catalog-emulator.md) passa a precisar de um
 token antes de chamar `POST`/`PUT` — via o app client "service" (Client Credentials).
+**Implementado:** `CatalogSyncClient` aceita um `token` opcional (enviado como
+`Authorization: Bearer`), e o CLI o lê de `--token` ou de `CATALOG_API_TOKEN`; localmente
+o token vem de `scripts/mint_dev_token.py`. A obtenção automática via Client Credentials
+contra um Cognito real continua sendo evolução futura.
 Isso não muda a arquitetura desenhada lá, só adiciona um passo de obtenção de token antes
 de cada sincronização. `created_by`/`updated_by` das tabelas sincronizadas pelo emulador
 passam a refletir a identidade do app client (ex. `glue-sync-service@...`), o que é
@@ -199,10 +203,11 @@ de dev — nunca em produção.
 5. Atualizar `tests/conftest.py` com o override de `get_current_principal`; adicionar
    teste de `401` sem token.
 6. `scripts/mint_dev_token.py` para teste manual local.
-7. Ajustar `scripts/glue_emulator/sync.py` (do SDD do emulador) para obter token via
-   client-credentials antes de sincronizar.
+7. ~~Ajustar `scripts/glue_emulator/sync.py`~~ **Pendente**: esse arquivo só existe na
+   branch `feature/glue-catalog-emulator`, ainda não mergeada nesta (`main`). Feito
+   deliberadamente fora de ordem para não misturar as duas branches — ver seção 12.
 8. Atualizar o README com a seção de autenticação (como obter um token de teste, como
-   chamar rotas protegidas via Swagger).
+   chamar rotas protegidas via Swagger). ✅
 
 ## 11. Evoluções futuras
 
@@ -216,3 +221,43 @@ de dev — nunca em produção.
 - Resolver `owner` automaticamente a partir de um diretório externo (ex. um serviço de
   "quem é dono de qual domínio"), mantendo-o como campo explícito, mas validado/sugerido
   em vez de texto totalmente livre — evolução natural, não coberta aqui.
+
+## 12. Validação executada (pós-implementação)
+
+Sem conta AWS configurada nesta sessão, então o Cognito do `template.yaml` **não foi
+implantado nem testado de verdade** — fica como desenho validado por leitura (YAML
+parseado com sucesso, decisão do scope custom para client-credentials revisada), não
+por execução, mesma ressalva já registrada para o `template.yaml` do Lambda.
+
+O que **foi** validado de ponta a ponta, contra a API local real (MongoDB via Docker,
+`uvicorn`), modo `AUTH_ISSUER=dev`:
+
+- `POST` sem token → `401 {"detail": "Missing bearer token"}`.
+- `GET /metadata` sem token → `200` (confirma que leitura continua pública).
+- `python scripts/mint_dev_token.py` → gera par de chaves em `.devkeys/` na primeira
+  execução, imprime um JWT válido.
+- `POST`/`PUT`/`DELETE` com o token gerado → `201`/`200`/`204`. `created_by` na resposta
+  bateu exatamente com o claim `email` do token (`henrique@picpay.com`), confirmando que
+  vem da identidade autenticada — **não** do corpo da requisição (que nem tem esse campo
+  no schema público).
+- Token malformado (`"isso.nao.e.um.jwt"`) → `401`, sem 500, sem stack trace.
+
+**Dois bugs reais encontrados e corrigidos durante essa validação:**
+
+1. `scripts/mint_dev_token.py` imprimia a mensagem "Generated a new dev signing
+   keypair..." no mesmo `stdout` do token — quebrando `TOKEN=$(python
+   scripts/mint_dev_token.py)` na primeira execução (a variável ficava com as duas
+   linhas concatenadas, um JWT inválido). Corrigido: mensagem informativa vai para
+   `stderr`, `stdout` carrega só o token.
+2. Achado por revisão de código antes de rodar (não em runtime): a rota de `PUT`
+   reconstruía o `MetadataUpdate` interno fazendo
+   `MetadataUpdate(**payload.model_dump(), updated_by=...)` sem `exclude_unset=True`.
+   Isso destruiria o rastreamento de "quais campos o cliente realmente enviou" que
+   `MetadataService.update()` usa para decidir se `columns` mudou — todo update passaria
+   a incluir `columns=None` como "setado", incrementando `schema_version` em updates que
+   nem tocam em colunas. Corrigido antes de rodar o teste que teria pego isso
+   (`test_full_crud_lifecycle`, que já cobre update não-estrutural mantendo
+   `schema_version=1`).
+
+Suíte completa: 28/28 testes passando (16 pré-existentes inalterados + 12 novos:
+`test_auth.py` e as adições em `test_metadata_api.py`).

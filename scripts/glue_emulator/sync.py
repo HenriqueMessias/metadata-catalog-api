@@ -26,8 +26,22 @@ class SyncStats:
 
 
 class CatalogSyncClient:
-    def __init__(self, api_base_url: str, timeout: float = 10.0):
-        self._client = httpx.Client(base_url=api_base_url.rstrip("/"), timeout=timeout)
+    """`token` is a Bearer JWT, required by the API's write routes
+    (docs/sdd-api-authentication.md, section 7); reads are public. Left unset,
+    requests go out unauthenticated, exactly as before authentication existed.
+    """
+
+    def __init__(
+        self,
+        api_base_url: str,
+        timeout: float = 10.0,
+        token: str | None = None,
+        transport: httpx.BaseTransport | None = None,
+    ):
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        self._client = httpx.Client(
+            base_url=api_base_url.rstrip("/"), timeout=timeout, headers=headers, transport=transport
+        )
 
     def close(self) -> None:
         self._client.close()

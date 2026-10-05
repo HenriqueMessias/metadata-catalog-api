@@ -59,12 +59,39 @@ class MetadataBase(BaseModel):
     location: str | None = Field(default=None, description="Physical location, e.g. s3://bucket/path or project.dataset.table")
 
 
+class MetadataCreateRequest(MetadataBase):
+    """The public POST /metadata request body.
+
+    Deliberately has no `created_by`: who made the request is derived from
+    the authenticated bearer token (see app/api/deps.py), never trusted from
+    the request body -- see docs/sdd-api-authentication.md, section 6.3.
+    """
+
+
+class MetadataUpdateRequest(BaseModel):
+    """The public PUT /metadata/{id} request body. See MetadataCreateRequest
+    for why `updated_by` is not accepted here either.
+    """
+
+    description: str | None = None
+    owner: Owner | None = None
+    domain: str | None = None
+    classification: DataClassification | None = None
+    tags: list[str] | None = None
+    columns: list[ColumnSchema] | None = None
+    location: str | None = None
+
+
 class MetadataCreate(MetadataBase):
+    """Internal, service-layer create model -- includes `created_by`, filled
+    in by the route from the authenticated principal, never by the client.
+    """
+
     created_by: str | None = None
 
 
 class MetadataUpdate(BaseModel):
-    """All fields optional: only supplied fields are applied by the service layer."""
+    """Internal, service-layer update model. See MetadataCreate."""
 
     description: str | None = None
     owner: Owner | None = None

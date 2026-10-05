@@ -5,7 +5,8 @@ from contextlib import asynccontextmanager
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.deps import get_metadata_repository
+from app.api.deps import get_current_principal, get_metadata_repository
+from app.core.security import Principal
 from app.main import create_app
 from app.models.metadata import ColumnSchema, MetadataCreate, Owner
 from app.services.metadata_service import MetadataService
@@ -43,11 +44,36 @@ def sample_payload() -> MetadataCreate:
 
 
 @pytest.fixture
-def client(repository: InMemoryMetadataRepository) -> TestClient:
+def principal() -> Principal:
+    return Principal(subject="test-user", email="test@example.com")
+
+
+@pytest.fixture
+def client(repository: InMemoryMetadataRepository, principal: Principal) -> TestClient:
     @asynccontextmanager
     async def noop_lifespan(app):
         # No real MongoDB connection needed: the repository dependency is
         # overridden below to use the in-memory fake instead.
+        yield
+
+    app = create_app(lifespan_context=noop_lifespan)
+    app.dependency_overrides[get_metadata_repository] = lambda: repository
+    # Same pattern as the repository: bypass real JWT verification in tests
+    # via FastAPI's dependency_overrides, so tests stay hermetic (no key
+    # files, no network) -- see tests/test_auth.py for the one test that
+    # exercises get_current_principal itself, without this override.
+    app.dependency_overrides[get_current_principal] = lambda: principal
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def unauthenticated_client(repository: InMemoryMetadataRepository) -> TestClient:
+    """Like `client`, but does NOT override auth -- for testing the 401 path."""
+
+    @asynccontextmanager
+    async def noop_lifespan(app):
         yield
 
     app = create_app(lifespan_context=noop_lifespan)
